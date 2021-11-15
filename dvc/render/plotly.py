@@ -47,9 +47,10 @@ class ParallelCoordinatesRenderer(Renderer):
                 float_values = [float(x) for x in values]
             except ValueError:
                 is_categorical = True
-                dummy_values = list(range(len(values)))
+                unique_values = sorted(set(values))
 
             if is_categorical:
+                dummy_values = [unique_values.index(x) for x in values]
                 trace["dimensions"].append(
                     {
                         "label": label,

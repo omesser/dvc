@@ -3,6 +3,7 @@ import logging
 from collections import Counter, OrderedDict, defaultdict
 from datetime import date, datetime
 from fnmatch import fnmatch
+from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Iterable, Optional
 
 from funcy import compact, lmap
@@ -387,6 +388,7 @@ def show_experiments(
     no_timestamp=False,
     csv=False,
     markdown=False,
+    html=False,
     **kwargs,
 ):
     from funcy.seqs import flatten as flatten_list
@@ -434,7 +436,7 @@ def show_experiments(
         kwargs.get("iso"),
     )
 
-    if no_timestamp:
+    if no_timestamp or html:
         td.drop("Created")
 
     for col in ("State", "Executor"):
@@ -471,8 +473,20 @@ def show_experiments(
         }
     )
 
-    if kwargs.get("only_changed", False):
+    if kwargs.get("only_changed", False) or html:
         td.drop_duplicates("cols")
+
+    extra_render_args = {}
+    if html:
+        td.dropna("rows")
+        td.column("Experiment")[:] = [
+            # remove tree characters
+            str(x).encode("ascii", "ignore").strip().decode()
+            for x in td.column("Experiment")
+        ]
+        rel = kwargs.get("out") or "dvc_plots"
+        extra_render_args["output_path"] = (Path.cwd() / rel).resolve()
+        extra_render_args["color_by"] = kwargs.get("color_by", "Experiment")
 
     td.render(
         pager=pager,
@@ -482,7 +496,25 @@ def show_experiments(
         row_styles=row_styles,
         csv=csv,
         markdown=markdown,
+        html=html,
+        **extra_render_args,
     )
+
+    if html and kwargs.get("open"):
+        import webbrowser
+        from platform import uname
+
+        if "Microsoft" in uname().release:
+            url = Path(rel) / "index.html"
+        else:
+            url = Path(extra_render_args["output_path"]) / "index.html"
+            url = url.as_uri()
+
+        opened = webbrowser.open(url)
+
+        if not opened:
+            ui.error_write("Failed to open. Please try opening it manually.")
+            return 1
 
 
 def _normalize_headers(names, count):
@@ -541,6 +573,10 @@ class CmdExperimentsShow(CmdBase):
                 csv=self.args.csv,
                 markdown=self.args.markdown,
                 only_changed=self.args.only_changed,
+                html=self.args.html,
+                color_by=self.args.color_by,
+                out=self.args.out,
+                open=self.args.open,
             )
         return 0
 
@@ -1044,6 +1080,34 @@ def add_parser(subparsers, parent_parser):
             "Only show metrics/params with values varying "
             "across the selected experiments."
         ),
+    )
+    experiments_show_parser.add_argument(
+        "--html",
+        action="store_true",
+        default=False,
+        help="Generate a parallel coordinates plot from the tabulated output.",
+    )
+    experiments_show_parser.add_argument(
+        "--color-by",
+        default="Experiment",
+        help=(
+            "Use the specified metric or param as color in "
+            "the parallel coordinates plot."
+        ),
+        metavar="<metric/param>",
+    )
+    experiments_show_parser.add_argument(
+        "-o",
+        "--out",
+        default=None,
+        help="Destination path to save the HTML to",
+        metavar="<path>",
+    ).complete = completion.DIR
+    experiments_show_parser.add_argument(
+        "--open",
+        action="store_true",
+        default=False,
+        help="Open the HTML directly in the browser.",
     )
     experiments_show_parser.set_defaults(func=CmdExperimentsShow)
 
